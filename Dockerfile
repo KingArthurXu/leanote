@@ -1,26 +1,74 @@
-FROM ubuntu:14.04
-MAINTAINER Qingyu Xu "qingyu.xu@gmail.com"
+FROM debian:jessie
 
-# add golang repository
-RUN apt-get update
-RUN apt-get install -y python-software-properties software-properties-common
+ENV LEANOTE_VERSION=2.5
 
-# add mongodb repository
-RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10
-RUN echo "deb http://repo.mongodb.org/apt/ubuntu "$(lsb_release -sc)"/mongodb-org/3.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb.list
+RUN apt update \
+    && apt install -y wget ca-certificates \
+    && wget https://iweb.dl.sourceforge.net/project/leanote-bin/${LEANOTE_VERSION}/leanote-linux-amd64-v${LEANOTE_VERSION}.bin.tar.gz \
+    && apt remove -y wget \
+    && tar -zxvf leanote-linux-amd64-v${LEANOTE_VERSION}.bin.tar.gz -C / \
+    && mkdir -p /leanote/data/public/upload \
+    && mkdir -p /leanote/data/files \
+    && mkdir -p /leanote/data/mongodb_backup \
+    ## copy data then delete
+    && cp -r /leanote/mongodb_backup/* /leanote/data/mongodb_backup \  
+    && rm -r /leanote/public/upload \
+    && rm -r /leanote/mongodb_backup \
+    && rm leanote-linux-amd64-v${LEANOTE_VERSION}.bin.tar.gz \
+    && ln -s /leanote/data/public/upload /leanote/public/upload \
+    && ln -s /leanote/data/files /leanote/files \
+    && ln -s /leanote/data/mongodb_backup /leanote/mongodb_backup \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# install golang and mongodb
-RUN apt-get -y install golang mongodb
+RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 0C49F3730359A14518585931BC711F9BA15703C6 \
+    && echo "deb http://repo.mongodb.org/apt/debian jessie/mongodb-org/3.4 main" \
+    | tee /etc/apt/sources.list.d/mongodb-org-3.4.list \
+    && apt update \
+    && apt install -y \
+        # Tools to export pdf
+        wkhtmltopdf \
+        # Tools to backup mongodb
+        mongodb \
+        #mongodb-org-tools \
+        # wkhtmltopdf headless workaround
+        xvfb \
+        # Additionnal dependencies for better rendering
+        ttf-freefont \
+        fontconfig \
+        dbus \
+        psmisc \
+    # Chinese fonts
+    && apt-get install -y \
+        fonts-arphic-bkai00mp \
+        fonts-arphic-bsmi00lp \
+        fonts-arphic-gbsn00lp \
+        fonts-arphic-gkai00mp \
+        fonts-arphic-ukai \
+        fonts-arphic-uming \
+        ttf-wqy-zenhei \
+        ttf-wqy-microhei \
+        xfonts-wqy \
+    && fc-cache \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    # Wrapper for xvfb
+    && mv /usr/bin/wkhtmltopdf /usr/bin/wkhtmltopdf-origin \
+    && \
+    echo '#!/usr/bin/env sh\n\
+Xvfb :0 -screen 0 1024x768x24 -ac +extension GLX +render -noreset & \n\
+DISPLAY=:0.0 wkhtmltopdf-origin $@ \n\
+killall Xvfb\
+' > /usr/bin/wkhtmltopdf && \
+    chmod +x /usr/bin/wkhtmltopdf
 
-# install git and openssh
-RUN apt-get install -y git-core mercurial openssh-server openssh-client
-
-# fetch revel and leanote
-RUN go get github.com/revel/cmd/revel
-RUN go get github.com/leanote/leanote/app
-
-RUN mongorestore -h localhost -d leanote --dir $HOME/leanote/mongodb_backup/leanote_install_data/
+RUN     sed -i '1a mkdir -p /leanote/data/data '                        /leanote/bin/run.sh \
+    &&  sed -i '2a mongod --dbpath /leanote/data/data &'                /leanote/bin/run.sh \
+    &&  sed -i '3a sleep 8 '                                            /leanote/bin/run.sh \
+    &&  sed -i '4a if [ ! -f "/leanote/date/data/leanote.0" ]; then '   /leanote/bin/run.sh \
+    &&  sed -i '5a      mongorestore -h localhost -d leanote --dir /leanote/mongodb_backup/leanote_install_data/' /leanote/bin/run.sh \
+    &&  sed -i '6a fi'                                                  /leanote/bin/run.sh
+    
+VOLUME /leanote/data/
 
 EXPOSE 9000
 
-CMD revel run github.com/leanote/leanote
+CMD ["sh", "/leanote/bin/run.sh"]
